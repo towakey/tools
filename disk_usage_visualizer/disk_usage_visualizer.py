@@ -139,6 +139,12 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
   .bar-track { flex: 1; background: #e9ecef; border-radius: 4px; height: 18px; overflow: hidden; }
   .bar-fill { height: 100%; border-radius: 4px; }
   .bar-value { width: 90px; min-width: 90px; text-align: right; padding-left: 8px; }
+  #treemapContainer { width: 100%; height: 300px; position: relative; border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; background: #fff; }
+  .tree-node { position: absolute; box-sizing: border-box; min-width: 1px; min-height: 1px; border: 1px solid #fff; overflow: hidden; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding: 2px 4px; cursor: pointer; font-size: 0.75em; color: #222; }
+  .tree-node:hover { filter: brightness(0.92); }
+  .tree-node.file { cursor: default; }
+  .tree-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; }
+  .tree-value { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -154,6 +160,10 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
   <div class="chart-box">
     <div class="chart-title">上位項目</div>
     <div id="barChartContainer"></div>
+  </div>
+  <div class="chart-box">
+    <div class="chart-title">トレーマップ（ヒートマップ）</div>
+    <div id="treemapContainer"></div>
   </div>
 </div>
 <table>
@@ -234,6 +244,121 @@ function renderBar(items) {
   });
 }
 
+function worstAspectRatio(row, rowTotal, w, h) {
+  if (rowTotal === 0 || row.length === 0) return Infinity;
+  const side = Math.min(w, h);
+  const area = w * h;
+  const other = (rowTotal * area) / side;
+  let worst = 0;
+  row.forEach(function(e) {
+    const len = (e.value / rowTotal) * side;
+    if (len === 0) return;
+    const ratio = Math.max(other / len, len / other);
+    if (ratio > worst) worst = ratio;
+  });
+  return worst;
+}
+
+function squarify(values, x, y, w, h, result) {
+  if (w <= 0 || h <= 0) return;
+  if (values.length === 0) return;
+  if (values.length === 1) {
+    result.push({ item: values[0].item, x: x, y: y, w: w, h: h });
+    return;
+  }
+  let row = [];
+  let rowTotal = 0;
+  let remaining = { x: x, y: y, w: w, h: h };
+  function layoutRow() {
+    if (row.length === 0) return;
+    const area = remaining.w * remaining.h;
+    const rowArea = rowTotal * area;
+    if (remaining.w >= remaining.h) {
+      const rowW = rowArea / remaining.h;
+      let cy = remaining.y;
+      row.forEach(function(e) {
+        const h = (e.value / rowTotal) * remaining.h;
+        result.push({ item: e.item, x: remaining.x, y: cy, w: rowW, h: h });
+        cy += h;
+      });
+      remaining.x += rowW;
+      remaining.w -= rowW;
+    } else {
+      const rowH = rowArea / remaining.w;
+      let cx = remaining.x;
+      row.forEach(function(e) {
+        const w = (e.value / rowTotal) * remaining.w;
+        result.push({ item: e.item, x: cx, y: remaining.y, w: w, h: rowH });
+        cx += w;
+      });
+      remaining.y += rowH;
+      remaining.h -= rowH;
+    }
+    row = [];
+    rowTotal = 0;
+  }
+  values.forEach(function(entry) {
+    if (row.length === 0) {
+      row.push(entry);
+      rowTotal += entry.value;
+      return;
+    }
+    const worstWithout = worstAspectRatio(row, rowTotal, remaining.w, remaining.h);
+    const newRow = row.slice();
+    newRow.push(entry);
+    const worstWith = worstAspectRatio(newRow, rowTotal + entry.value, remaining.w, remaining.h);
+    if (worstWith <= worstWithout) {
+      row.push(entry);
+      rowTotal += entry.value;
+    } else {
+      layoutRow();
+      row.push(entry);
+      rowTotal += entry.value;
+    }
+  });
+  layoutRow();
+}
+
+function renderTreemap(items, total) {
+  const container = document.getElementById('treemapContainer');
+  container.innerHTML = '';
+  if (total === 0 || items.length === 0) return;
+  const maxSize = items.reduce(function(m, it) { return Math.max(m, it.size); }, 0);
+  const values = items.filter(function(it) { return it.size > 0; }).map(function(it) { return { item: it, value: it.size / total }; });
+  const rects = [];
+  squarify(values, 0, 0, 100, 100, rects);
+  rects.forEach(function(r) {
+    const it = r.item;
+    const isDir = it.children && it.children.length > 0;
+    const ratio = maxSize ? it.size / maxSize : 0;
+    const hue = (1 - ratio) * 120;
+    const div = document.createElement('div');
+    div.className = 'tree-node' + (isDir ? '' : ' file');
+    div.style.left = r.x + '%';
+    div.style.top = r.y + '%';
+    div.style.width = r.w + '%';
+    div.style.height = r.h + '%';
+    div.style.background = 'hsl(' + hue + ', 70%, 55%)';
+    div.title = it.name + ' ' + humanReadable(it.size) + ' (' + ((it.size / total) * 100).toFixed(1) + '%)';
+    const label = document.createElement('div');
+    label.className = 'tree-label';
+    label.textContent = it.name;
+    const value = document.createElement('div');
+    value.className = 'tree-value';
+    value.textContent = humanReadable(it.size);
+    if (r.w >= 12 && r.h >= 8) {
+      div.appendChild(label);
+      if (r.h >= 14) {
+        div.appendChild(value);
+      }
+    }
+    if (isDir) {
+      div.addEventListener('click', function() { drillDown(it); });
+    }
+    container.appendChild(div);
+  });
+}
+
 function render() {
   const items = currentData.children || [];
   const total = items.reduce(function(s, it) { return s + it.size; }, 0);
@@ -245,6 +370,7 @@ function render() {
 
   renderPie(items, total);
   renderBar(items);
+  renderTreemap(items, total);
 
   const tbody = document.getElementById('tableBody');
   tbody.innerHTML = '';
