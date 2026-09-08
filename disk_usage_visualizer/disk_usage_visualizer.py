@@ -43,6 +43,8 @@ import sqlite3
 import argparse
 import urllib.parse
 import http.server
+import shutil
+import hashlib
 from string import Template
 
 
@@ -104,6 +106,11 @@ def path_name(p):
         return p
     p = p.rstrip('/')
     return p.split('/')[-1]
+
+
+def _hash_path(p):
+    """パスから安全なファイル名ハッシュを生成"""
+    return hashlib.sha256(p.encode('utf-8')).hexdigest()
 
 
 def get_size(path):
@@ -846,6 +853,83 @@ loadRoot();
 </html>""")
 
 
+_SPLIT_JS = """<script src="paths.js"></script>
+<script>window.__duData = {};</script>
+<script>
+function __splitMakeResponse(obj) { return { json: function() { return Promise.resolve(obj); } }; }
+function __splitFetch(url, options) {
+  return new Promise(function(resolve, reject) {
+    var m = url.match(/^\\/?api\\/(children|info)\\?path=(.+)$$/);
+    if (!m) { reject(new Error('unknown url: ' + url)); return; }
+    var action = m[1];
+    var path = decodeURIComponent(m[2]);
+    var h = window.__duPaths[path];
+    if (!h) {
+      if (action === 'children') { resolve(__splitMakeResponse([])); return; }
+      reject(new Error('not found: ' + path)); return;
+    }
+    if (window.__duData[h]) {
+      resolve(__splitMakeResponse(action === 'info' ? window.__duData[h] : window.__duData[h].children));
+      return;
+    }
+    var s = document.createElement('script');
+    s.src = 'data/' + h.substring(0, 2) + '/' + h + '.js';
+    s.onload = function() {
+      resolve(__splitMakeResponse(action === 'info' ? window.__duData[h] : window.__duData[h].children));
+    };
+    s.onerror = function() { reject(new Error('load error: ' + path)); };
+    document.head.appendChild(s);
+  });
+}
+window.fetch = __splitFetch;
+function __splitParentPath(p) {
+  if (p === ROOT_PATH) return '';
+  if (p.length === 3 && p[1] === ':' && p[2] === '/') return '';
+  if (p === '/') return '';
+  if (p.endsWith('/')) p = p.slice(0, -1);
+  var idx = p.lastIndexOf('/');
+  if (idx === -1) return '';
+  if (idx === 0) return '/';
+  if (p[idx - 1] === ':') return p.slice(0, idx) + '/';
+  return p.slice(0, idx);
+}
+function navigateToStart() {
+  var params = new URLSearchParams(window.location.search);
+  var start = params.get('path') || ROOT_PATH;
+  if (start === ROOT_PATH) { loadRoot(); return; }
+  var chain = [];
+  var p = start;
+  var guard = 0;
+  while (p && p !== ROOT_PATH && guard < 100) {
+    chain.unshift(p);
+    p = __splitParentPath(p);
+    guard++;
+  }
+  loadInfo(ROOT_PATH).then(function(root) {
+    treeData = root;
+    currentData = root;
+    currentPath = [];
+    var i = 0;
+    function next() {
+      if (i >= chain.length) { render(); return; }
+      var target = chain[i];
+      var child = currentData.children.find(function(c) { return c.path === target; });
+      if (!child) { console.warn('target not found', target); render(); return; }
+      loadInfo(child.path).then(function(data) {
+        currentPath.push(data);
+        currentData = data;
+        i++;
+        next();
+      }).catch(function(e) { console.error(e); render(); });
+    }
+    next();
+  }).catch(function(e) { console.error(e); });
+}
+</script>
+"""
+SPLIT_TEMPLATE = Template(VIEWER_TEMPLATE.template.replace('</head>', _SPLIT_JS + '</head>').replace('loadRoot();\n</script>', 'navigateToStart();\n</script>'))
+
+
 def _ensure_schema(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS entries (
         path TEXT PRIMARY KEY,
@@ -912,6 +996,105 @@ def scan_to_sqlite(path, db_path, max_depth=None):
         conn.commit()
     finally:
         conn.close()
+
+
+def _write_split_page(path, data, out_dir):
+    """分割用データファイル (data/*.js) を書き出す"""
+    h = _hash_path(path)
+    prefix = h[:2]
+    data_dir = os.path.join(out_dir, 'data', prefix)
+    os.makedirs(data_dir, exist_ok=True)
+    page_path = os.path.join(data_dir, h + '.js')
+    with open(page_path, 'w', encoding='utf-8') as f:
+        f.write(f"window.__duData['{h}'] = " + json.dumps(data, ensure_ascii=False) + ';')
+
+
+def _generate_split(path, out_dir, mapping, max_depth=None, current_depth=0):
+    """path 以下を走査し、各ディレクトリごとに .js ファイルを出力する"""
+    try:
+        entries = list(os.scandir(path))
+    except (OSError, PermissionError):
+        entries = []
+
+    children = []
+    total = 0
+    current_p = to_posix(path)
+
+    for entry in entries:
+        if entry.is_file(follow_symlinks=False):
+            try:
+                fsize = entry.stat(follow_symlinks=False).st_size
+            except (OSError, PermissionError):
+                fsize = 0
+            total += fsize
+            children.append({
+                'name': entry.name,
+                'path': to_posix(entry.path),
+                'size': fsize,
+                'size_h': human_readable(fsize),
+                'is_dir': False,
+                'has_page': False
+            })
+        elif entry.is_dir(follow_symlinks=False):
+            child_p = to_posix(entry.path)
+            child_has_page = (max_depth is None or current_depth < max_depth)
+            if child_has_page:
+                dsize = _generate_split(entry.path, out_dir, mapping, max_depth, current_depth + 1)
+            else:
+                dsize = get_size(entry.path)
+            total += dsize
+            children.append({
+                'name': entry.name,
+                'path': child_p,
+                'size': dsize,
+                'size_h': human_readable(dsize),
+                'is_dir': True,
+                'has_page': child_has_page
+            })
+
+    children.sort(key=lambda x: x['size'], reverse=True)
+    page_data = {
+        'name': path_name(current_p),
+        'path': current_p,
+        'parent': parent_path(current_p),
+        'size': total,
+        'size_h': human_readable(total),
+        'is_dir': True,
+        'has_page': True,
+        'children': children
+    }
+    _write_split_page(current_p, page_data, out_dir)
+    mapping[current_p] = _hash_path(current_p)
+    return total
+
+
+def generate_split_site(path, out_dir, max_depth=None):
+    """サーバー不要で閲覧できる静的サイトを生成する"""
+    root = normalize_path(path)
+    if not os.path.exists(root):
+        raise FileNotFoundError(f'パスが存在しません: {root}')
+
+    os.makedirs(out_dir, exist_ok=True)
+    data_root = os.path.join(out_dir, 'data')
+    if os.path.exists(data_root):
+        shutil.rmtree(data_root)
+
+    mapping = {}
+    _generate_split(root, out_dir, mapping, max_depth, 0)
+
+    with open(os.path.join(out_dir, 'paths.js'), 'w', encoding='utf-8') as f:
+        f.write('window.__duPaths = ' + json.dumps(mapping, ensure_ascii=False) + ';')
+
+    root_label = path_name(root)
+    page_html = SPLIT_TEMPLATE.substitute(
+        root_path=html.escape(root),
+        root_label=html.escape(root_label),
+        generated_time=time.strftime('%Y-%m-%d %H:%M:%S')
+    )
+    with open(os.path.join(out_dir, 'index.html'), 'w', encoding='utf-8') as f:
+        f.write(page_html)
+
+    return out_dir
 
 
 def generate_html(data, output_path, root_label):
@@ -1068,12 +1251,12 @@ def main():
     parser = argparse.ArgumentParser(
         description='Windows 環境向け ディスク使用容量可視化ツール (Python3.7標準モジュールのみ、オフラインOK)'
     )
-    parser.add_argument('--mode', choices=['html', 'sqlite', 'server'], default='html',
-                        help='出力モード: html=単体HTML, sqlite=SQLite+ビューア, server=SQLite+HTTPサーバー (既定: html)')
+    parser.add_argument('--mode', choices=['html', 'sqlite', 'server', 'split'], default='html',
+                        help='出力モード: html=単体HTML, sqlite=SQLite+ビューア, server=SQLite+HTTPサーバー, split=静的HTML分割 (既定: html)')
     parser.add_argument('--path', default='D:/', help='対象パス (既定: D:/ )')
     parser.add_argument('--depth', type=int, default=None,
                         help='走査する最大フォルダ階層 (未指定で無制限)')
-    parser.add_argument('--output', help='出力ファイル (html/sqlite)')
+    parser.add_argument('--output', help='出力ファイル (html/sqlite) または出力ディレクトリ (split)')
     parser.add_argument('--db', help='server モードで使用する既存の SQLite ファイル')
     parser.add_argument('--host', default='127.0.0.1', help='server ホスト (既定: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=8000, help='server ポート (既定: 8000)')
@@ -1108,6 +1291,19 @@ def main():
         print(f'ビューア: {viewer}')
         print('以下のコマンドでサーバーを起動できます:')
         print(f'  python disk_usage_visualizer.py --mode server --db {args.output} --port {args.port}')
+
+    elif args.mode == 'split':
+        if not args.output:
+            args.output = 'disk_usage_site'
+        root = normalize_path(args.path)
+        if not os.path.exists(root):
+            print(f'[ERROR] パスが存在しません: {root}')
+            sys.exit(1)
+        print(f'走査対象: {root}')
+        print('容量を集計中... (時間がかかる場合があります)')
+        out_dir = generate_split_site(root, args.output, args.depth)
+        print(f'完了: {out_dir}/index.html を生成しました。')
+        print('index.html をブラウザで開いてください (Pythonサーバー不要)。')
 
     elif args.mode == 'server':
         if args.db:
