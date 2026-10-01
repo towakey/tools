@@ -1,0 +1,47 @@
+{
+  "database": "disk_usage.db",
+  "alert_resend_minutes": 1440,
+  "smtp": {
+    "host": "smtp.example.co.jp",
+    "port": 587,
+    "use_tls": true,
+    "use_ssl": false,
+    "username": "disk-monitor@example.co.jp",
+    "password": "CHANGE_ME",
+    "from": "disk-monitor@example.co.jp",
+    "timeout_seconds": 10
+  },
+  "targets": [
+    {
+      "id": "d_drive",
+      "name": "Dドライブ",
+      "type": "drive",
+      "path": "D:\\",
+      "alerts": [
+        {
+          "label": "警告 80%",
+          "threshold_percent": 80,
+          "emails": ["admin@example.co.jp"]
+        },
+        {
+          "label": "重大 90%",
+          "threshold_percent": 90,
+          "emails": ["admin@example.co.jp", "manager@example.co.jp"]
+        }
+      ]
+    },
+    {
+      "id": "backup_dir",
+      "name": "バックアップフォルダ",
+      "type": "folder",
+      "path": "D:\\backup",
+      "alerts": [
+        {
+          "label": "100GB 超",
+          "threshold_gb": 100,
+          "emails": ["backup-admin@example.co.jp"]
+        }
+      ]
+    }
+  ]
+}
