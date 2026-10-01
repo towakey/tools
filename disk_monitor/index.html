@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ディスク使用量推移</title>
+<style>
+  body { font-family: "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif; margin: 16px; color: #222; }
+  h1 { font-size: 20px; }
+  #controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+  #targets { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; }
+  #targets label { cursor: pointer; user-select: none; }
+  #msg { color: #b91c1c; margin: 4px 0; }
+  canvas { width: 100%; border: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<h1>ディスク使用量推移</h1>
+<div id="controls">
+  <label>期間 <input type="date" id="from"> 〜 <input type="date" id="to"></label>
+  <button id="reload">表示</button>
+  <label><input type="radio" name="unit" value="gb" checked> GB</label>
+  <label><input type="radio" name="unit" value="pct"> %</label>
+</div>
+<div id="targets"></div>
+<div id="msg"></div>
+<canvas id="chart" height="460"></canvas>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c",
+                "#0891b2", "#be185d", "#4d7c0f"];
+const G = 1024 ** 3;
+let DATA = null, visible = {};
+
+function fmtDate(d) { return d.toISOString().slice(0, 10); }
+function parseTs(s) { return new Date(s.replace(" ", "T")); }
+
+async function load() {
+  $("msg").textContent = "";
+  const p = new URLSearchParams({ from: $("from").value, to: $("to").value });
+  try {
+    const r = await fetch("usage_data.py?" + p);
+    DATA = await r.json();
+    if (!DATA.ok) throw new Error(DATA.error || "server error");
+  } catch (e) {
+    $("msg").textContent = "データ取得に失敗しました: " + e.message;
+    DATA = { targets: [], records: [] };
+  }
+  buildTargets();
+  draw();
+}
+
+function targetList() {
+  const byId = {};
+  DATA.targets.forEach(t => { byId[t.id] = t; });
+  DATA.records.forEach(r => { if (!byId[r.target_id]) byId[r.target_id] = { id: r.target_id, name: r.target_id, alerts: [] }; });
+  return Object.values(byId);
+}
+
+function buildTargets() {
+  const box = $("targets");
+  box.innerHTML = "";
+  targetList().forEach((t, i) => {
+    t.color = COLORS[i % COLORS.length];
+    if (!(t.id in visible)) visible[t.id] = true;
+    const l = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = visible[t.id];
+    cb.onchange = () => { visible[t.id] = cb.checked; draw(); };
+    l.appendChild(cb);
+    l.insertAdjacentHTML("beforeend", ` <span style="color:${t.color}">■</span> ${t.name || t.id}`);
+    box.appendChild(l);
+  });
+}
+
+function yval(rec, unit) {
+  return unit === "gb" ? rec.used_bytes / G
+       : rec.total_bytes ? rec.used_bytes / rec.total_bytes * 100 : 0;
+}
+function limitVal(alert, lastTotal, unit) {
+  if (alert.threshold_gb != null)
+    return unit === "gb" ? alert.threshold_gb
+         : lastTotal ? alert.threshold_gb * G / lastTotal * 100 : null;
+  if (alert.threshold_percent != null)
+    return unit === "pct" ? alert.threshold_percent
+         : lastTotal ? alert.threshold_percent / 100 * lastTotal / G : null;
+  return null;
+}
+
+function draw() {
+  if (!DATA) return;
+  const cv = $("chart"), ctx = cv.getContext("2d");
+  const W = cv.parentElement.clientWidth - 2, H = 460;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const unit = document.querySelector("input[name=unit]:checked").value;
+  const M = { l: 64, r: 20, t: 16, b: 42 };
+  const x0 = parseTs($("from").value + " 00:00:00").getTime();
+  const x1 = parseTs($("to").value + " 23:59:59").getTime();
+  const series = targetList().filter(t => visible[t.id]).map(t => {
+    const recs = DATA.records.filter(r => r.target_id === t.id).sort((a, b) => a.ts < b.ts ? -1 : 1);
+    return { t, recs, lastTotal: recs.length ? recs[recs.length - 1].total_bytes : null };
+  });
+
+  let ymax = 0;
+  series.forEach(s => {
+    s.recs.forEach(r => { ymax = Math.max(ymax, yval(r, unit)); });
+    s.t.alerts.forEach(a => { const v = limitVal(a, s.lastTotal, unit); if (v != null) ymax = Math.max(ymax, v); });
+  });
+  ymax = ymax ? ymax * 1.1 : (unit === "gb" ? 10 : 100);
+  const X = ms => M.l + (ms - x0) / (x1 - x0) * (W - M.l - M.r);
+  const Y = v => H - M.b - v / ymax * (H - M.t - M.b);
+
+  // グリッド + Y軸ラベル
+  ctx.font = "12px sans-serif"; ctx.strokeStyle = "#e5e7eb"; ctx.fillStyle = "#666";
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 5; i++) {
+    const v = ymax * i / 5, y = Y(v);
+    ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(W - M.r, y); ctx.stroke();
+    ctx.fillText((unit === "gb" ? v.toFixed(1) : v.toFixed(0)) + (unit === "gb" ? " GB" : "%"), M.l - 6, y + 4);
+  }
+  // X軸ラベル
+  ctx.textAlign = "center";
+  const span = x1 - x0, n = Math.min(7, Math.max(2, Math.floor((W - M.l - M.r) / 110)));
+  for (let i = 0; i <= n; i++) {
+    const ms = x0 + span * i / n, d = new Date(ms), x = X(ms);
+    ctx.fillText(fmtDate(d), x, H - 24);
+    if (span <= 2 * 86400e3) ctx.fillText(d.toTimeString().slice(0, 5), x, H - 10);
+  }
+
+  // 閾値の水平線(破線)
+  series.forEach(s => {
+    s.t.alerts.forEach(a => {
+      const v = limitVal(a, s.lastTotal, unit);
+      if (v == null) return;
+      const y = Y(Math.min(v, ymax));
+      ctx.save();
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = s.t.color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(W - M.r, y); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = s.t.color; ctx.textAlign = "left";
+      ctx.fillText(a.label || "threshold", M.l + 4, y - 3);
+    });
+  });
+
+  // 使用量の折れ線
+  ctx.lineWidth = 2;
+  series.forEach(s => {
+    if (!s.recs.length) return;
+    ctx.strokeStyle = s.t.color;
+    ctx.beginPath();
+    s.recs.forEach((r, i) => {
+      const x = X(parseTs(r.ts).getTime()), y = Y(yval(r, unit));
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+  });
+
+  if (!series.some(s => s.recs.length)) {
+    ctx.fillStyle = "#666"; ctx.textAlign = "center";
+    ctx.fillText("この期間のデータはありません", W / 2, H / 2);
+  }
+}
+
+(function init() {
+  const now = new Date();
+  $("to").value = fmtDate(now);
+  $("from").value = fmtDate(new Date(now.getTime() - 7 * 86400e3));
+  $("reload").onclick = load;
+  document.querySelectorAll("input[name=unit]").forEach(r => r.onchange = draw);
+  window.addEventListener("resize", draw);
+  load();
+})();
+</script>
+</body>
+</html>
