@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>タスクスケジューラ一覧</title>
+<style>
+  body { font-family: "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif; margin: 16px; color: #222; font-size: 14px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  #info { color: #555; margin-bottom: 8px; }
+  #controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+  #q { width: 360px; padding: 4px; }
+  #msg { color: #b91c1c; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #ddd; padding: 4px 6px; vertical-align: top; text-align: left; }
+  th { background: #f3f4f6; position: sticky; top: 0; }
+  td { overflow-wrap: anywhere; }
+  td.nw { white-space: nowrap; }
+  tr.disabled td { color: #999; }
+  .cmd { font-family: Consolas, monospace; }
+  .sub { color: #666; font-size: 12px; }
+  mark { background: #fde68a; color: inherit; }
+</style>
+</head>
+<body>
+<h1>タスクスケジューラ一覧 <span id="server"></span></h1>
+<div id="info"></div>
+<div id="controls">
+  <input id="q" type="search" placeholder="タスク名・説明・プログラム・引数(URL)で検索 (スペース区切りでAND)" autofocus>
+  <label>フォルダ <select id="folder"><option value="">すべて</option></select></label>
+  <label>状態 <select id="state"><option value="">すべて</option><option value="1">有効</option><option value="0">無効</option></select></label>
+  <span id="count"></span>
+</div>
+<div id="msg"></div>
+<table>
+  <thead><tr><th>フォルダ</th><th>タスク名</th><th>説明</th><th>状態</th><th>実行ユーザー</th><th>トリガー</th><th>操作</th></tr></thead>
+  <tbody id="list"></tbody>
+</table>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let TASKS = [];
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function hl(s, words) {
+  if (!words.length) return esc(s);
+  const re = new RegExp("(" + words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  return String(s).split(re).map((p, i) => i % 2 ? "<mark>" + esc(p) + "</mark>" : esc(p)).join("");
+}
+
+function searchText(t) {
+  return [t.folder, t.name, t.description, t.author, t.user]
+    .concat(t.actions.map(a => [a.command, a.arguments, a.workdir].join(" ")))
+    .join("\n").toLowerCase();
+}
+
+function render() {
+  const words = $("q").value.replace(/\u3000/g, " ").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const folder = $("folder").value, state = $("state").value;
+  const rows = TASKS.filter(t =>
+    (!folder || t.folder.startsWith(folder)) &&
+    (!state || String(+t.enabled) === state) &&
+    words.every(w => t._text.includes(w)));
+  $("list").innerHTML = rows.map(t =>
+    '<tr class="' + (t.enabled ? "" : "disabled") + '">' +
+    "<td class=\"nw\">" + hl(t.folder, words) + "</td>" +
+    "<td>" + hl(t.name, words) + "</td>" +
+    "<td>" + hl(t.description, words) + (t.author ? '<div class="sub">作成者: ' + hl(t.author, words) + "</div>" : "") + "</td>" +
+    "<td class=\"nw\">" + (t.enabled ? "有効" : "無効") + "</td>" +
+    "<td class=\"nw\">" + hl(t.user, words) + "</td>" +
+    "<td class=\"nw\">" + t.triggers.map(esc).join("<br>") + "</td>" +
+    "<td>" + t.actions.map(a =>
+      '<div class="cmd">' + hl(a.command, words) + " " + hl(a.arguments, words) + "</div>" +
+      (a.workdir ? '<div class="sub">開始: ' + hl(a.workdir, words) + "</div>" : "")).join("") + "</td>" +
+    "</tr>").join("");
+  $("count").textContent = rows.length + " / " + TASKS.length + " 件";
+}
+
+function init() {
+  const d = window.TASK_DATA;
+  if (!d) { $("msg").textContent = "tasks.js を読み込めませんでした。export_tasks.py を実行してください。"; return; }
+  TASKS = d.tasks;
+  TASKS.forEach(t => { t._text = searchText(t); });
+  $("server").textContent = "- " + d.server;
+  $("info").textContent = "データ更新: " + d.generated;
+  document.title += " - " + d.server;
+  [...new Set(TASKS.map(t => t.folder))].sort().forEach(f => $("folder").add(new Option(f, f)));
+  ["q", "folder", "state"].forEach(id => $(id).addEventListener("input", render));
+  render();
+}
+
+// キャッシュされた古いデータを読まないよう毎回クエリを付けて読み込む
+const s = document.createElement("script");
+s.src = "tasks.js?t=" + Date.now();
+s.onload = s.onerror = init;
+document.head.appendChild(s);
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "tasks_dir": "%SystemRoot%\\System32\\Tasks",
+  "output": "tasks.js",
+  "exclude_folders": [
+    "\\Microsoft\\"
+  ],
+  "mask_patterns": [
+    "(?i)(?<=password=)[^\\s\"&]+",
+    "(?i)(?<=pwd=)[^\\s\"&]+",
+    "(?i)(?<=token=)[^\\s\"&]+"
+  ]
+}
