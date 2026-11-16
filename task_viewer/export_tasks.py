@@ -108,7 +108,7 @@ def parse_task(path, folder, name, masks):
 def collect(tasks_dir, exclude_folders, masks):
     tasks, errors = [], []
     excludes = [e.lower() for e in exclude_folders]
-    for dirpath, dirnames, filenames in os.walk(tasks_dir):
+    for dirpath, dirnames, filenames in os.walk(tasks_dir, onerror=lambda e: errors.append(str(e))):
         rel = os.path.relpath(dirpath, tasks_dir)
         folder = "\\" if rel == "." else "\\" + rel.replace("/", "\\") + "\\"
         if any(folder.lower().startswith(e) for e in excludes):
@@ -133,6 +133,11 @@ def main():
         setting = json.load(f)
 
     tasks_dir = os.path.expandvars(setting.get("tasks_dir", r"%SystemRoot%\System32\Tasks"))
+    # 32bit Python では System32 が SysWOW64 に振り替えられるため Sysnative 経由で読む
+    system32 = os.path.expandvars(r"%SystemRoot%\System32")
+    sysnative = os.path.expandvars(r"%SystemRoot%\Sysnative")
+    if os.path.isdir(sysnative) and tasks_dir.lower().startswith(system32.lower()):
+        tasks_dir = sysnative + tasks_dir[len(system32):]
     if not os.path.isdir(tasks_dir):
         sys.exit("tasks_dir が見つかりません: " + tasks_dir)
     masks = [re.compile(p) for p in setting.get("mask_patterns", [])]
@@ -149,7 +154,7 @@ def main():
         f.write("window.TASK_DATA = " + json.dumps(data, ensure_ascii=False) + ";\n")
     os.replace(tmp, out)
 
-    print("{} 件を出力しました: {}".format(len(tasks), out))
+    print("{} 件を出力しました: {} (読み取り元: {})".format(len(tasks), out, tasks_dir))
     for e in errors:
         print("読み取り失敗: " + e, file=sys.stderr)
     return 1 if errors else 0
