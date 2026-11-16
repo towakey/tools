@@ -52,7 +52,14 @@ assert hours("<T><StartBoundary>2026-01-01T09:15:00</StartBoundary><Enabled>fals
 assert ex.run_hours(ex.ET.fromstring("<BootTrigger " + NS + " />")) == []
 assert once("<StartBoundary>2000-01-01T09:00:00</StartBoundary>") == []
 assert once("<StartBoundary>2000-01-01T09:00:00</StartBoundary><Repetition><Interval>PT1H</Interval><Duration>PT2H</Duration></Repetition>") == []
-assert once("<StartBoundary>2000-01-01T22:00:00</StartBoundary><Repetition><Interval>PT1H</Interval></Repetition>") == list(range(24))
+assert once("<StartBoundary>2999-01-01T22:00:00</StartBoundary><Repetition><Interval>PT1H</Interval></Repetition>") == list(range(24))
 assert once("<StartBoundary>2999-01-01T09:00:00</StartBoundary>") == [9]
 assert hours("<T><StartBoundary>2000-01-01T09:00:00</StartBoundary><EndBoundary>2000-02-01T00:00:00</EndBoundary></T>") == []
+# 7時間間隔は 1440 の約数関係で全時間に到達する
+assert hours("<T><StartBoundary>2000-01-01T10:00:00</StartBoundary><Repetition><Interval>PT7H</Interval></Repetition></T>") == list(range(24))
+assert hours("<T><StartBoundary>2000-01-01T23:30:00</StartBoundary><Repetition><Interval>PT30M</Interval><Duration>PT2H</Duration></Repetition></T>") == [0, 1, 23]
+assert hours("<T><StartBoundary>2000-01-01T10:00:00</StartBoundary><Repetition><Interval>PT7H</Interval><Duration>P3D</Duration></Repetition></T>") == [0, 1, 4, 7, 8, 10, 11, 14, 17, 18, 21]
+# 1回限り: 最後の実行が間隔の途中で終わる場合、その実行時刻を過ぎたら対象外
+assert once("<StartBoundary>2999-01-01T22:00:00</StartBoundary><Repetition><Interval>PT1H</Interval><Duration>PT5H</Duration></Repetition>") == [0, 1, 2, 22, 23]
+assert once("<StartBoundary>2999-01-01T22:00:00</StartBoundary><Repetition><Interval>PT1H</Interval><Duration>PT5H</Duration></Repetition>") == [0, 1, 2, 22, 23]
 print("OK")

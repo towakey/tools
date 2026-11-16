@@ -18,6 +18,7 @@ import socket
 import argparse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+import math
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NS = "{http://schemas.microsoft.com/windows/2004/02/mit/task}"
@@ -113,11 +114,21 @@ def run_hours(trig):
     interval = minutes(text(trig, "Repetition/Interval"))
     rep = minutes(text(trig, "Repetition/Duration")) if interval else 0
     if tag == "TimeTrigger" and (not interval or rep):
-        if start + timedelta(minutes=rep) < now:
-            return []  # 実行が終わった1回限りトリガー
+        if rep:
+            k = (rep - 1) // interval  # 最終実行は Duration 終端を含まない
+            if start + timedelta(minutes=k * interval) < now:
+                return []  # 実行が終わった1回限りトリガー
+        elif start < now:
+            return []
     first = start.hour * 60 + start.minute
-    span = min(rep or 1440, 1440)  # 繰り返し期間なし(無期限)は1日分を見る
-    offsets = range(0, span, interval) if interval else [0]
+    if interval:
+        # (first + k*interval) mod 1440 が取りうる値は interval と 1440 の公約数の倍数。
+        # 実行回数はその周期 (cyc) で一周するので、span は最後の実行が入るよう (cyc-1)*interval。
+        cyc = 1440 // math.gcd(interval, 1440)
+        n = cyc if not rep else min(cyc, (rep - 1) // interval + 1)
+        offsets = range(0, (n - 1) * interval + 1, interval)
+    else:
+        offsets = [0]
     return sorted({(first + o) // 60 % 24 for o in offsets})
 
 
