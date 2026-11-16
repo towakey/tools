@@ -17,7 +17,7 @@ import json
 import socket
 import argparse
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NS = "{http://schemas.microsoft.com/windows/2004/02/mit/task}"
@@ -84,23 +84,38 @@ def minutes(iso):
     return d * 1440 + h * 60 + mi
 
 
+BOUNDARY = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:\d\d)?$")
+
+
+def local_time(boundary):
+    """StartBoundary/EndBoundary をこのサーバーのローカル日時 (naive) に。UTC オフセット付きは変換する。"""
+    m = BOUNDARY.match(boundary)
+    if not m:
+        return None
+    dt = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
+    tz = m.group(2)
+    if tz:
+        offset = timedelta(0) if tz == "Z" else (1 if tz[0] == "+" else -1) * timedelta(hours=int(tz[1:3]), minutes=int(tz[4:6]))
+        dt = dt.replace(tzinfo=timezone(offset)).astimezone().replace(tzinfo=None)
+    return dt
+
+
 def run_hours(trig):
     """トリガーが実行される「時」(0-23) の一覧。日付・曜日は見ない。時刻を持たないトリガーは空。"""
     tag = trig.tag.replace(NS, "")
-    start = text(trig, "StartBoundary")
-    if tag not in ("CalendarTrigger", "TimeTrigger") or len(start) < 16 or text(trig, "Enabled").lower() == "false":
+    start = local_time(text(trig, "StartBoundary"))
+    if tag not in ("CalendarTrigger", "TimeTrigger") or start is None or text(trig, "Enabled").lower() == "false":
         return []
-    now = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    end = text(trig, "EndBoundary")
-    if end and end[:16] < now:
+    now = datetime.now()
+    end = local_time(text(trig, "EndBoundary"))
+    if end and end < now:
         return []  # 有効期限切れ
     interval = minutes(text(trig, "Repetition/Interval"))
     rep = minutes(text(trig, "Repetition/Duration")) if interval else 0
     if tag == "TimeTrigger" and (not interval or rep):
-        last = datetime.strptime(start[:16], "%Y-%m-%dT%H:%M") + timedelta(minutes=rep)
-        if last.strftime("%Y-%m-%dT%H:%M") < now:
+        if start + timedelta(minutes=rep) < now:
             return []  # 実行が終わった1回限りトリガー
-    first = int(start[11:13]) * 60 + int(start[14:16])
+    first = start.hour * 60 + start.minute
     span = min(rep or 1440, 1440)  # 繰り返し期間なし(無期限)は1日分を見る
     offsets = range(0, span, interval) if interval else [0]
     return sorted({(first + o) // 60 % 24 for o in offsets})
