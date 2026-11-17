@@ -28,6 +28,7 @@
 <div id="controls">
   <input id="q" type="search" placeholder="タスク名・説明・プログラム・引数(URL)で検索 (スペース区切りでAND)" autofocus>
   <label>フォルダ <select id="folder"><option value="">すべて</option></select></label>
+  <label>実行時間帯 <select id="hour"><option value="">すべて</option></select></label>
   <label>状態 <select id="state"><option value="">すべて</option><option value="1">有効</option><option value="0">無効</option></select></label>
   <span id="count"></span>
 </div>
@@ -59,10 +60,11 @@ function searchText(t) {
 
 function render() {
   const words = $("q").value.replace(/\u3000/g, " ").trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const folder = $("folder").value, state = $("state").value;
+  const folder = $("folder").value, state = $("state").value, hour = $("hour").value;
   const rows = TASKS.filter(t =>
     (!folder || t.folder.startsWith(folder)) &&
     (!state || String(+t.enabled) === state) &&
+    (!hour || (t.hours || []).includes(+hour)) &&
     words.every(w => t._text.includes(w)));
   $("list").innerHTML = rows.map(t =>
     '<tr class="' + (t.enabled ? "" : "disabled") + '">' +
@@ -88,7 +90,11 @@ function init() {
   $("info").textContent = "データ更新: " + d.generated;
   document.title += " - " + d.server;
   [...new Set(TASKS.map(t => t.folder))].sort().forEach(f => $("folder").add(new Option(f, f)));
-  ["q", "folder", "state"].forEach(id => $(id).addEventListener("input", render));
+  for (let h = 0; h < 24; h++) {
+    const n = TASKS.filter(t => (t.hours || []).includes(h)).length;
+    $("hour").add(new Option(h + "時台 (" + n + "件)", h));
+  }
+  ["q", "folder", "hour", "state"].forEach(id => $(id).addEventListener("input", render));
   render();
 }
 

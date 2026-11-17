@@ -33,4 +33,33 @@ assert t["folder"] == "\\業務\\" and t["name"] == "集計"
 assert t["description"] == "売上集計" and t["user"] == "SYSTEM" and t["enabled"] is False
 assert t["triggers"] == ["毎週(月金) 2026-01-01 03:00 1時間30分ごと"], t["triggers"]
 assert t["actions"][0]["arguments"] == "a.py http://x/?password=***&b=1", t["actions"]
+# 03:00 開始・1時間30分ごと(無期限) -> 2,5,8,...,23 時以外
+assert t["hours"] == [0, 1, 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22], t["hours"]
+
+NS = 'xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"'
+def hours(xml):
+    return ex.run_hours(ex.ET.fromstring(xml.replace("<T>", "<CalendarTrigger " + NS + ">").replace("</T>", "</CalendarTrigger>")))
+def once(xml):
+    return ex.run_hours(ex.ET.fromstring("<TimeTrigger " + NS + ">" + xml + "</TimeTrigger>"))
+# 23:30 開始・30分ごと・2時間 -> 日付をまたぐ
+assert hours("<T><StartBoundary>2026-01-01T23:30:00</StartBoundary><Repetition><Interval>PT30M</Interval><Duration>PT2H</Duration></Repetition></T>") == [0, 1, 23]
+# UTC オフセット付きはローカル時刻に変換して判定
+utc9 = ex.datetime(2026, 1, 1, 0, 15, tzinfo=ex.timezone.utc).astimezone().hour
+assert hours("<T><StartBoundary>2026-01-01T09:15:00+09:00</StartBoundary></T>") == [utc9]
+assert hours("<T><StartBoundary>2026-01-01T00:15:00.1234567Z</StartBoundary></T>") == [utc9]
+assert once("<StartBoundary>2999-01-01T09:00:00-05:00</StartBoundary>") != []
+assert hours("<T><StartBoundary>2026-01-01T09:15:00</StartBoundary><Enabled>false</Enabled></T>") == []
+assert ex.run_hours(ex.ET.fromstring("<BootTrigger " + NS + " />")) == []
+assert once("<StartBoundary>2000-01-01T09:00:00</StartBoundary>") == []
+assert once("<StartBoundary>2000-01-01T09:00:00</StartBoundary><Repetition><Interval>PT1H</Interval><Duration>PT2H</Duration></Repetition>") == []
+assert once("<StartBoundary>2999-01-01T22:00:00</StartBoundary><Repetition><Interval>PT1H</Interval></Repetition>") == list(range(24))
+assert once("<StartBoundary>2999-01-01T09:00:00</StartBoundary>") == [9]
+assert hours("<T><StartBoundary>2000-01-01T09:00:00</StartBoundary><EndBoundary>2000-02-01T00:00:00</EndBoundary></T>") == []
+# 7時間間隔は 1440 の約数関係で全時間に到達する
+assert hours("<T><StartBoundary>2000-01-01T10:00:00</StartBoundary><Repetition><Interval>PT7H</Interval></Repetition></T>") == list(range(24))
+assert hours("<T><StartBoundary>2000-01-01T23:30:00</StartBoundary><Repetition><Interval>PT30M</Interval><Duration>PT2H</Duration></Repetition></T>") == [0, 1, 23]
+assert hours("<T><StartBoundary>2000-01-01T10:00:00</StartBoundary><Repetition><Interval>PT7H</Interval><Duration>P3D</Duration></Repetition></T>") == [0, 1, 4, 7, 8, 10, 11, 14, 17, 18, 21]
+# 1回限り: 最後の実行が間隔の途中で終わる場合、その実行時刻を過ぎたら対象外
+assert once("<StartBoundary>2999-01-01T22:00:00</StartBoundary><Repetition><Interval>PT1H</Interval><Duration>PT5H</Duration></Repetition>") == [0, 1, 2, 22, 23]
+assert once("<StartBoundary>2999-01-01T22:00:00</StartBoundary><Repetition><Interval>PT1H</Interval><Duration>PT5H</Duration></Repetition>") == [0, 1, 2, 22, 23]
 print("OK")

@@ -17,7 +17,8 @@ import json
 import socket
 import argparse
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import math
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NS = "{http://schemas.microsoft.com/windows/2004/02/mit/task}"
@@ -33,9 +34,12 @@ DAYS = {"Sunday": "日", "Monday": "月", "Tuesday": "火", "Wednesday": "水",
         "Thursday": "木", "Friday": "金", "Saturday": "土"}
 
 
+ISO_DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
+
+
 def duration(iso):
     """PT1H30M -> 1時間30分 (変換できなければそのまま)"""
-    m = re.match(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$", iso)
+    m = ISO_DURATION.match(iso)
     if not m or not any(m.groups()):
         return iso
     return "".join(v + u for v, u in zip(m.groups(), ("日", "時間", "分", "秒")) if v)
@@ -72,6 +76,62 @@ def trigger_summary(trig):
     return " ".join(parts)
 
 
+def minutes(iso):
+    """PT1H30M -> 90 (秒は切り捨て、変換できなければ 0)"""
+    m = ISO_DURATION.match(iso)
+    if not m:
+        return 0
+    d, h, mi, _ = (int(x or 0) for x in m.groups())
+    return d * 1440 + h * 60 + mi
+
+
+BOUNDARY = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:\d\d)?$")
+
+
+def local_time(boundary):
+    """StartBoundary/EndBoundary をこのサーバーのローカル日時 (naive) に。UTC オフセット付きは変換する。"""
+    m = BOUNDARY.match(boundary)
+    if not m:
+        return None
+    dt = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
+    tz = m.group(2)
+    if tz:
+        offset = timedelta(0) if tz == "Z" else (1 if tz[0] == "+" else -1) * timedelta(hours=int(tz[1:3]), minutes=int(tz[4:6]))
+        dt = dt.replace(tzinfo=timezone(offset)).astimezone().replace(tzinfo=None)
+    return dt
+
+
+def run_hours(trig):
+    """トリガーが実行される「時」(0-23) の一覧。日付・曜日は見ない。時刻を持たないトリガーは空。"""
+    tag = trig.tag.replace(NS, "")
+    start = local_time(text(trig, "StartBoundary"))
+    if tag not in ("CalendarTrigger", "TimeTrigger") or start is None or text(trig, "Enabled").lower() == "false":
+        return []
+    now = datetime.now()
+    end = local_time(text(trig, "EndBoundary"))
+    if end and end < now:
+        return []  # 有効期限切れ
+    interval = minutes(text(trig, "Repetition/Interval"))
+    rep = minutes(text(trig, "Repetition/Duration")) if interval else 0
+    if tag == "TimeTrigger" and (not interval or rep):
+        if rep:
+            k = (rep - 1) // interval  # 最終実行は Duration 終端を含まない
+            if start + timedelta(minutes=k * interval) < now:
+                return []  # 実行が終わった1回限りトリガー
+        elif start < now:
+            return []
+    first = start.hour * 60 + start.minute
+    if interval:
+        # (first + k*interval) mod 1440 が取りうる値は interval と 1440 の公約数の倍数。
+        # 実行回数はその周期 (cyc) で一周するので、span は最後の実行が入るよう (cyc-1)*interval。
+        cyc = 1440 // math.gcd(interval, 1440)
+        n = cyc if not rep else min(cyc, (rep - 1) // interval + 1)
+        offsets = range(0, (n - 1) * interval + 1, interval)
+    else:
+        offsets = [0]
+    return sorted({(first + o) // 60 % 24 for o in offsets})
+
+
 def action_summary(act):
     tag = act.tag.replace(NS, "")
     if tag == "Exec":
@@ -101,6 +161,7 @@ def parse_task(path, folder, name, masks):
         "user": WELL_KNOWN_SIDS.get(user, user),
         "enabled": text(root, "Settings/Enabled").lower() != "false",
         "triggers": [trigger_summary(t) for t in (triggers if triggers is not None else [])],
+        "hours": sorted({h for t in (triggers if triggers is not None else []) for h in run_hours(t)}),
         "actions": acts,
     }
 
