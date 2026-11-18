@@ -3,25 +3,42 @@ rem ============================================================
 rem  wip_stat.YYYYMMDD を期間指定で集めてZIP化する
 rem
 rem  使い方: wip_zip.bat [開始日YYYYMMDD] [終了日YYYYMMDD]
-rem    引数省略時は setting.json の start_date / end_date
-rem    (既定: 20240101 ～ 昨日)
+rem    引数省略時は下記 CFG_START / CFG_END (既定: 20240101 ～ 昨日)
 rem
-rem  設定は同じフォルダの setting.json
-rem  7-Zip (7z.exe) が必要。PATH に無い場合は setting.json の
-rem  seven_zip にフルパスを書く
+rem  7-Zip (7z.exe) が必要。PATH に無い場合は CFG_7Z にフルパスを書く
 rem ============================================================
 setlocal
+
+rem ==================== 設定 (ここを編集) ====================
+rem 保存ルート
+set "CFG_ROOT=\\10.20.24.88\load4"
+rem 対象ファイル名のプレフィックス
+set "CFG_PREFIX=wip_stat"
+rem 期間の既定 (YYYYMMDD または yesterday/today)
+set "CFG_START=20240101"
+set "CFG_END=yesterday"
+rem ZIP出力先 (相対ならこのbatのフォルダ基準)
+set "CFG_OUTDIR=output"
+rem ZIP名 ({start}/{end} が期間に置き換わる)
+set "CFG_ZIPNAME=wip_stat_{start}_{end}.zip"
+rem 7z.exe のパス (PATHが通ってれば 7z のまま)
+set "CFG_7Z=7z"
+rem 検索対象: 「相対パス:recursive(true/false)」を ; 区切りで列挙
+rem   相対パスが空 = ルート直下のみ。stock_data は年月階層ごと再帰。
+rem   2025年分が将来 stock_data に移動しても変更不要 (再帰で拾える)
+set "CFG_DIRS=stock_data:true;:false"
+rem ==========================================================
 
 cd /d "%~dp0"
 
 rem このファイル末尾のPowerShellを取り出して実行する
-rem (パスは環境変数経由で渡す。コマンド列への埋め込みだと
-rem  ' を含むパスで壊れるため)
-set SRCBAT=%~f0
-set SDIR=%~dp0.
-set WZIP_START=%1
-set WZIP_END=%2
-for /f "delims=: tokens=1" %%i in ('findstr /n "^### POWERSHELL ###" "%~f0"') do set SKIP=%%i
+rem (パス・引数は環境変数経由で渡す。コマンド列への埋め込みだと
+rem  ' や & を含むパスで壊れるため)
+set "SRCBAT=%~f0"
+set "SDIR=%~dp0."
+set "WZIP_START=%~1"
+set "WZIP_END=%~2"
+for /f "delims=: tokens=1" %%i in ('findstr /n "^### POWERSHELL ###" "%~f0"') do set "SKIP=%%i"
 if not defined SKIP (echo marker not found 1>&2 & exit /b 1)
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$l=[IO.File]::ReadAllLines($env:SRCBAT,[Text.Encoding]::GetEncoding(932)); $sb=[ScriptBlock]::Create((($l|Select-Object -Skip $env:SKIP) -join [Environment]::NewLine)); & $sb $env:SDIR $env:WZIP_START $env:WZIP_END"
 set RC=%ERRORLEVEL%
@@ -37,10 +54,28 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $scriptDir = $ScriptDir.TrimEnd('\')
-$config = Get-Content -LiteralPath (Join-Path $scriptDir 'setting.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+
+# 設定はbat先頭の set "CFG_*" 変数から環境変数経由で来る
+$config = [pscustomobject]@{
+  root_folder = $env:CFG_ROOT
+  file_prefix = if ($env:CFG_PREFIX)  { $env:CFG_PREFIX }  else { 'wip_stat' }
+  start_date  = if ($env:CFG_START)   { $env:CFG_START }   else { '20240101' }
+  end_date    = if ($env:CFG_END)     { $env:CFG_END }     else { 'yesterday' }
+  output_dir  = $env:CFG_OUTDIR
+  zip_name    = if ($env:CFG_ZIPNAME) { $env:CFG_ZIPNAME } else { 'wip_stat_{start}_{end}.zip' }
+  seven_zip   = if ($env:CFG_7Z)      { $env:CFG_7Z }      else { '7z' }
+  scan_dirs   = @()
+}
+foreach ($e in ($env:CFG_DIRS -split ';')) {
+  $p = $e -split ':', 2
+  if ($p.Count -eq 2) {
+    $config.scan_dirs += [pscustomobject]@{ path = $p[0].Trim(); recursive = ($p[1].Trim() -eq 'true') }
+  }
+}
 
 function Resolve-Date([string]$v) {
-  if ($v -eq '' -or $null -eq $v) { throw '日付が未指定です' }
+  $v = "$v".Trim('"')
+  if ($v -eq '') { throw '日付が未指定です' }
   if ($v -eq 'yesterday') { return (Get-Date).AddDays(-1).ToString('yyyyMMdd') }
   if ($v -eq 'today')     { return (Get-Date).ToString('yyyyMMdd') }
   if ($v -notmatch '^\d{8}$') { throw "日付の形式が不正です: $v (YYYYMMDD または yesterday/today)" }
