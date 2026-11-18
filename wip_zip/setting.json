@@ -1,0 +1,13 @@
+{
+  "root_folder": "\\\\10.20.24.88\\load4",
+  "file_prefix": "wip_stat",
+  "start_date": "20240101",
+  "end_date": "yesterday",
+  "output_dir": "output",
+  "zip_name": "wip_stat_{start}_{end}.zip",
+  "seven_zip": "7z",
+  "scan_dirs": [
+    { "path": "stock_data", "recursive": true },
+    { "path": "", "recursive": false }
+  ]
+}
