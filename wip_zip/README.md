@@ -15,7 +15,7 @@ wip_zip.bat [開始日YYYYMMDD] [終了日YYYYMMDD]
 ## 必要なもの
 
 - 7-Zip（`7z.exe`）。PATH に無い場合は `setting.json` の `seven_zip` にフルパスを書く
-- PowerShell（Windows 標準でOK）
+- PowerShell（Windows 標準でOK。`wip_zip.bat` 末尾に内蔵していて、実行時に `%TEMP%` へ取り出して動く）
 
 ## setting.json
 
