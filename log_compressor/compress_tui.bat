@@ -193,8 +193,7 @@ if(Test-Path -LiteralPath $zip){ $old=[IO.Compression.ZipFile]::OpenRead($zip)
 $new=[IO.Compression.ZipFile]::Open($tmp,'Update')
 try { foreach($e in $old.Entries){ if(-not $new.GetEntry($e.FullName)){ $src=$e.Open(); $dst=$new.CreateEntry($e.FullName).Open()
 try { $src.CopyTo($dst) } finally { $dst.Dispose(); $src.Dispose() } } } } finally { $new.Dispose(); $old.Dispose() }
-$bak=$zip+'.bak'
-if(Test-Path -LiteralPath $bak){ Remove-Item -LiteralPath $bak -Force }
+$bak=$zip+'.old'+[guid]::NewGuid().ToString('N').Substring(0,8)
 [IO.File]::Move($zip,$bak)
 [IO.File]::Move($tmp,$zip)
 Remove-Item -LiteralPath $bak -Force } else { [IO.File]::Move($tmp,$zip) } } catch { if(Test-Path -LiteralPath $tmp){ Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
