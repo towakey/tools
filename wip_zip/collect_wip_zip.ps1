@@ -64,11 +64,14 @@ try {
   New-Item -ItemType Directory -Force -Path $outDir | Out-Null
   $zipName = ($config.zip_name -replace '\{start\}', $start) -replace '\{end\}', $end
   $zipPath = Join-Path $outDir $zipName
-  if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+  # 失敗時に既存ZIPを消さないよう、別名で作成してから置き換える
+  $tmpZip = "$zipPath.tmp"
+  if (Test-Path -LiteralPath $tmpZip) { Remove-Item -LiteralPath $tmpZip -Force }
 
-  & $config.seven_zip a $zipPath -tzip -scsUTF-8 "-i@$listFile"
+  & $config.seven_zip a $tmpZip -tzip -scsUTF-8 "-i@$listFile"
   if ($LASTEXITCODE -ne 0) { throw "7z が失敗しました (exit=$LASTEXITCODE)" }
-  if (-not (Test-Path -LiteralPath $zipPath)) { throw "ZIPが作成されませんでした: $zipPath" }
+  if (-not (Test-Path -LiteralPath $tmpZip)) { throw "ZIPが作成されませんでした: $tmpZip" }
+  Move-Item -LiteralPath $tmpZip -Destination $zipPath -Force
 
   $size = (Get-Item -LiteralPath $zipPath).Length
   Write-Host "作成完了: $zipPath ($('{0:N0}' -f $size) bytes)"
