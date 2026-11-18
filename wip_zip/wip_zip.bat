@@ -5,7 +5,8 @@ rem
 rem  使い方: wip_zip.bat [開始日YYYYMMDD] [終了日YYYYMMDD]
 rem    引数省略時は下記 CFG_START / CFG_END (既定: 20240101 ～ 昨日)
 rem
-rem  7-Zip (7z.exe) が必要。PATH に無い場合は CFG_7Z にフルパスを書く
+rem  7-Zip (7z.exe) が必要。PATH or Program Files から自動検出。
+rem  見つからない・別パスに入れてる場合は CFG_7Z にフルパスを書く
 rem ============================================================
 setlocal
 
@@ -21,8 +22,8 @@ rem ZIP出力先 (相対ならこのbatのフォルダ基準)
 set "CFG_OUTDIR=output"
 rem ZIP名 ({start}/{end} が期間に置き換わる)
 set "CFG_ZIPNAME=wip_stat_{start}_{end}.zip"
-rem 7z.exe のパス (PATHが通ってれば 7z のまま)
-set "CFG_7Z=7z"
+rem 7z.exe のパス (空なら PATH/Program Files から自動検出)
+set "CFG_7Z="
 rem 検索対象: 「相対パス:recursive(true/false)」を ; 区切りで列挙
 rem   相対パスが空 = ルート直下のみ。stock_data は年月階層ごと再帰。
 rem   2025年分が将来 stock_data に移動しても変更不要 (再帰で拾える)
@@ -63,7 +64,7 @@ $config = [pscustomobject]@{
   end_date    = if ($env:CFG_END)     { $env:CFG_END }     else { 'yesterday' }
   output_dir  = $env:CFG_OUTDIR
   zip_name    = if ($env:CFG_ZIPNAME) { $env:CFG_ZIPNAME } else { 'wip_stat_{start}_{end}.zip' }
-  seven_zip   = if ($env:CFG_7Z)      { $env:CFG_7Z }      else { '7z' }
+  seven_zip   = $env:CFG_7Z
   scan_dirs   = @()
 }
 foreach ($e in ($env:CFG_DIRS -split ';')) {
@@ -132,7 +133,19 @@ try {
   $tmpZip = "$zipPath.tmp"
   if (Test-Path -LiteralPath $tmpZip) { Remove-Item -LiteralPath $tmpZip -Force }
 
-  & $config.seven_zip a $tmpZip -tzip -scsUTF-8 "-i@$listFile"
+  # 7z.exe: CFG_7Z 指定があればそれ、なければ PATH → Program Files を探す
+  $sevenZip = $config.seven_zip
+  if ([string]::IsNullOrEmpty($sevenZip)) {
+    $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+    if (-not $sevenZip) {
+      $candidates = @((Join-Path $env:ProgramFiles '7-Zip\7z.exe'))
+      if (${env:ProgramFiles(x86)}) { $candidates += Join-Path ${env:ProgramFiles(x86)} '7-Zip\7z.exe' }
+      $sevenZip = ($candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)
+    }
+    if (-not $sevenZip) { throw '7z.exe が見つかりません。7-Zipをインストールするか CFG_7Z にフルパスを書いてください' }
+  }
+
+  & $sevenZip a $tmpZip -tzip -scsUTF-8 "-i@$listFile"
   if ($LASTEXITCODE -ne 0) { throw "7z が失敗しました (exit=$LASTEXITCODE)" }
   if (-not (Test-Path -LiteralPath $tmpZip)) { throw "ZIPが作成されませんでした: $tmpZip" }
   Move-Item -LiteralPath $tmpZip -Destination $zipPath -Force

@@ -14,7 +14,7 @@ wip_zip.bat [開始日YYYYMMDD] [終了日YYYYMMDD]
 
 ## 必要なもの
 
-- 7-Zip（`7z.exe`）。PATH に無い場合は設定 `CFG_7Z` にフルパスを書く
+- 7-Zip（`7z.exe`）。PATH または Program Files から自動検出する。見つからない場合は設定 `CFG_7Z` にフルパスを書く
 - PowerShell（Windows 標準でOK）
 
 ## 設定（`wip_zip.bat` 先頭の `set "CFG_*"` を編集）
@@ -26,7 +26,7 @@ wip_zip.bat [開始日YYYYMMDD] [終了日YYYYMMDD]
 | `CFG_START` / `CFG_END` | 既定の期間。`YYYYMMDD` or `yesterday`/`today` |
 | `CFG_OUTDIR` | ZIP出力先。相対パスはbatのフォルダ基準 |
 | `CFG_ZIPNAME` | ZIP名。`{start}`/`{end}` が期間に置き換わる |
-| `CFG_7Z` | 7z.exe のパス。PATH が通ってれば `7z` のまま |
+| `CFG_7Z` | 7z.exe のパス。空なら PATH/Program Files から自動検出 |
 | `CFG_DIRS` | 検索対象。`相対パス:recursive` を `;` 区切りで列挙 |
 
 ### CFG_DIRS の仕組み
