@@ -189,7 +189,15 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive=[IO.Compression.ZipFile]::OpenRead($tmp)
 try { if($archive.Entries.Count -ne $files.Count){ throw ('ZIP内のファイル数が一致しません（予定 '+$files.Count+' / 実際 '+$archive.Entries.Count+'）') } } finally { $archive.Dispose() }
 if((Get-Item -LiteralPath $tmp).Length -le 0){ throw '作成されたZIPファイルが空です' }
-if(Test-Path -LiteralPath $zip){ [IO.File]::Replace($tmp,$zip,$null) } else { [IO.File]::Move($tmp,$zip) } } catch { if(Test-Path -LiteralPath $tmp){ Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+if(Test-Path -LiteralPath $zip){ $old=[IO.Compression.ZipFile]::OpenRead($zip)
+$new=[IO.Compression.ZipFile]::Open($tmp,'Update')
+try { foreach($e in $old.Entries){ if(-not $new.GetEntry($e.FullName)){ $src=$e.Open(); $dst=$new.CreateEntry($e.FullName).Open()
+try { $src.CopyTo($dst) } finally { $dst.Dispose(); $src.Dispose() } } } } finally { $new.Dispose(); $old.Dispose() }
+$bak=$zip+'.bak'
+if(Test-Path -LiteralPath $bak){ Remove-Item -LiteralPath $bak -Force }
+[IO.File]::Move($zip,$bak)
+[IO.File]::Move($tmp,$zip)
+Remove-Item -LiteralPath $bak -Force } else { [IO.File]::Move($tmp,$zip) } } catch { if(Test-Path -LiteralPath $tmp){ Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 Write-Host ('圧縮を中止しました: '+$_.Exception.Message)
 Write-Host '元ファイルは削除していません'
 exit 1 }
