@@ -15,6 +15,11 @@ function Resolve-Date([string]$v) {
   if ($v -eq 'yesterday') { return (Get-Date).AddDays(-1).ToString('yyyyMMdd') }
   if ($v -eq 'today')     { return (Get-Date).ToString('yyyyMMdd') }
   if ($v -notmatch '^\d{8}$') { throw "日付の形式が不正です: $v (YYYYMMDD または yesterday/today)" }
+  try {
+    [void][datetime]::ParseExact($v, 'yyyyMMdd', [Globalization.CultureInfo]::InvariantCulture)
+  } catch {
+    throw "存在しない日付です: $v"
+  }
   return $v
 }
 
