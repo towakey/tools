@@ -191,7 +191,9 @@ try { if($archive.Entries.Count -ne $files.Count){ throw ('ZIP内のファイル数が一
 if((Get-Item -LiteralPath $tmp).Length -le 0){ throw '作成されたZIPファイルが空です' }
 if(Test-Path -LiteralPath $zip){ $old=[IO.Compression.ZipFile]::OpenRead($zip)
 $new=[IO.Compression.ZipFile]::Open($tmp,'Update')
-try { foreach($e in $old.Entries){ if(-not $new.GetEntry($e.FullName)){ $src=$e.Open(); $dst=$new.CreateEntry($e.FullName).Open()
+try { foreach($e in $old.Entries){ if(-not $new.GetEntry($e.FullName)){ $ne=$new.CreateEntry($e.FullName)
+$ne.LastWriteTime=$e.LastWriteTime
+$src=$e.Open(); $dst=$ne.Open()
 try { $src.CopyTo($dst) } finally { $dst.Dispose(); $src.Dispose() } } } } finally { $new.Dispose(); $old.Dispose() }
 $bak=$zip+'.old'+[guid]::NewGuid().ToString('N').Substring(0,8)
 [IO.File]::Move($zip,$bak)
