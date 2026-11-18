@@ -204,7 +204,9 @@ exit 1 }
 Write-Host 'ZIPの作成と検証に成功しました'
 Write-Host '元ファイル削除中...'
 $deleteErrors=@()
-foreach($f in $files){ try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop } catch { $deleteErrors+=$f.Name } }
+foreach($f in $files){ try { $now=Get-Item -LiteralPath $f.FullName -ErrorAction Stop
+if($now.LastWriteTimeUtc -ne $f.LastWriteTimeUtc -or $now.Length -ne $f.Length){ $deleteErrors+=($f.Name+' (実行中に更新されたためスキップ)'); continue }
+Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop } catch { $deleteErrors+=$f.Name } }
 if($deleteErrors.Count -gt 0){ Write-Host ('削除できなかった元ファイル: '+($deleteErrors -join ', '))
 Write-Host ('ZIPは正常に作成済みです: '+$zip)
 exit 4 }
