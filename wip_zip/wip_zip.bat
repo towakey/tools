@@ -15,12 +15,16 @@ setlocal
 cd /d "%~dp0"
 
 rem このファイル末尾のPowerShellを取り出して実行する
-set TMPPS1=%TEMP%\wip_zip_body.ps1
+rem (パスは環境変数経由で渡す。コマンド列への埋め込みだと
+rem  ' を含むパスで壊れるため)
+set SRCBAT=%~f0
+set SDIR=%~dp0.
+set WZIP_START=%1
+set WZIP_END=%2
 for /f "delims=: tokens=1" %%i in ('findstr /n "^### POWERSHELL ###" "%~f0"') do set SKIP=%%i
-powershell -NoProfile -Command "$l = [System.IO.File]::ReadAllLines('%~f0', [System.Text.Encoding]::GetEncoding(932)); [System.IO.File]::WriteAllLines('%TMPPS1%', [string[]]($l | Select-Object -Skip %SKIP%), (New-Object System.Text.UTF8Encoding $true))"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%TMPPS1%" "%~dp0." %1 %2
+if not defined SKIP (echo marker not found 1>&2 & exit /b 1)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$l=[IO.File]::ReadAllLines($env:SRCBAT,[Text.Encoding]::GetEncoding(932)); $sb=[ScriptBlock]::Create((($l|Select-Object -Skip $env:SKIP) -join [Environment]::NewLine)); & $sb $env:SDIR $env:WZIP_START $env:WZIP_END"
 set RC=%ERRORLEVEL%
-del "%TMPPS1%" >nul 2>&1
 
 endlocal & exit /b %RC%
 
